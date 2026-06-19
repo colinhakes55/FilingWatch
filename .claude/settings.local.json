@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python scripts/check_connectivity.py)",
+      "Bash(.venv/bin/python scripts/collect_filings.py)",
+      "Bash(.venv/bin/python scripts/verify_db.py)"
+    ]
+  }
+}
