@@ -6,7 +6,13 @@
       "Bash(.venv/bin/python -c ' *)",
       "Bash(.venv/bin/python scripts/check_connectivity.py)",
       "Bash(.venv/bin/python scripts/collect_filings.py)",
-      "Bash(.venv/bin/python scripts/verify_db.py)"
+      "Bash(.venv/bin/python scripts/verify_db.py)",
+      "Bash(.venv/bin/pip list *)",
+      "Bash(.venv/bin/python scripts/build_universe.py)",
+      "Bash(.venv/bin/python scripts/collect_sp500.py --limit 10)",
+      "Bash(.venv/bin/python -)",
+      "Bash(.venv/bin/python scripts/collect_sp500.py)",
+      "Bash(.venv/bin/python scripts/eda.py)"
     ]
   }
 }

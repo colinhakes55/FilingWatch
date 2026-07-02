@@ -9,6 +9,7 @@ The SEC blocks requests that omit a proper User-Agent.
 """
 
 import os
+from datetime import date
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -44,6 +45,11 @@ EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 # ── Rate limiting ─────────────────────────────────────────────────────────────
 # SEC fair-access policy is ~10 req/s; we stay well under.
 MAX_REQUESTS_PER_SECOND: float = 5.0
+
+# ── Study window ─────────────────────────────────────────────────────────────
+# Change only these two constants to shift the study window.
+STUDY_WINDOW_START: date = date(2018, 1, 1)
+STUDY_WINDOW_END:   date = date.today()
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 _REPO_ROOT = Path(__file__).resolve().parents[2]

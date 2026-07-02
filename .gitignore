@@ -4,9 +4,12 @@
 # Virtual environment
 .venv/
 
-# Database files
+# Database files (large binary — do not commit)
 data/*.duckdb
 data/*.duckdb.wal
+
+# Generated EDA figures
+results/figures/
 
 # Python cache
 __pycache__/

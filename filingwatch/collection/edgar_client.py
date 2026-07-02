@@ -78,6 +78,16 @@ class EdgarClient:
         url = EDGAR_SUBMISSIONS_URL.format(cik=cik_padded)
         return self.get_json(url)
 
+    def fetch_submissions_file(self, filename: str) -> dict[str, Any]:
+        """
+        Fetch one of the additional paginated filing pages listed under
+        submissions.filings.files[].name.  These live at the same base URL as
+        the main submissions files and contain the same parallel-array structure
+        as filings.recent (not wrapped in a filings/recent envelope).
+        """
+        url = f"https://data.sec.gov/submissions/{filename}"
+        return self.get_json(url)
+
     def close(self):
         self._http.close()
 
