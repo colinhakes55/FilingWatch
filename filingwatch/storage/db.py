@@ -1,5 +1,5 @@
 """
-DuckDB storage layer — Checkpoint 2 normalized schema.
+DuckDB storage layer — Checkpoint 2 normalized schema + Checkpoint 3 detection tables.
 
 Tables
 ------
@@ -8,6 +8,8 @@ filings           one row per 8-K filing (accession_number PK, FK→companies.ci
 filing_items      one row per item code per filing (normalized many-to-one)
 collection_status per-company collection progress, used for resumability
 run_log           one row per collection run (audit trail)
+company_features  one row per company: cadence/item-mix baseline + drift score
+filing_scores     one row per filing: anomaly scores against its company's baseline
 
 DuckDB does not enforce FK constraints, but the column names document the
 intended relationships.
@@ -84,6 +86,37 @@ CREATE TABLE IF NOT EXISTS run_log (
 );
 """
 
+_CREATE_COMPANY_FEATURES = """
+CREATE TABLE IF NOT EXISTS company_features (
+    cik                    VARCHAR PRIMARY KEY,   -- FK → companies.cik
+    n_filings               INTEGER,
+    median_interval_days    DOUBLE,
+    mad_interval_days       DOUBLE,
+    thin_baseline           BOOLEAN,
+    item_distribution_json  VARCHAR,               -- {item_code: smoothed_prob}
+    drift_window_n          INTEGER,
+    drift_chi2_stat         DOUBLE,
+    drift_p_value           DOUBLE,
+    is_drifting             BOOLEAN,
+    computed_at             TIMESTAMP DEFAULT current_timestamp
+);
+"""
+
+_CREATE_FILING_SCORES = """
+CREATE TABLE IF NOT EXISTS filing_scores (
+    accession_number  VARCHAR PRIMARY KEY,   -- FK → filings.accession_number
+    cik               VARCHAR NOT NULL,      -- FK → companies.cik
+    interval_days     DOUBLE,
+    cadence_z         DOUBLE,
+    item_surprisal    DOUBLE,
+    item_surprisal_z  DOUBLE,
+    has_novel_item    BOOLEAN,
+    combined_score    DOUBLE,
+    is_flagged        BOOLEAN,
+    computed_at       TIMESTAMP DEFAULT current_timestamp
+);
+"""
+
 # ── DML ───────────────────────────────────────────────────────────────────────
 
 _UPSERT_COMPANY = """
@@ -119,6 +152,41 @@ ON CONFLICT (cik) DO UPDATE SET
     collected_at      = excluded.collected_at;
 """
 
+_UPSERT_COMPANY_FEATURES = """
+INSERT INTO company_features
+    (cik, n_filings, median_interval_days, mad_interval_days, thin_baseline,
+     item_distribution_json, drift_window_n, drift_chi2_stat, drift_p_value, is_drifting)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (cik) DO UPDATE SET
+    n_filings              = excluded.n_filings,
+    median_interval_days   = excluded.median_interval_days,
+    mad_interval_days      = excluded.mad_interval_days,
+    thin_baseline          = excluded.thin_baseline,
+    item_distribution_json = excluded.item_distribution_json,
+    drift_window_n         = excluded.drift_window_n,
+    drift_chi2_stat        = excluded.drift_chi2_stat,
+    drift_p_value          = excluded.drift_p_value,
+    is_drifting             = excluded.is_drifting,
+    computed_at            = now();
+"""
+
+_UPSERT_FILING_SCORE = """
+INSERT INTO filing_scores
+    (accession_number, cik, interval_days, cadence_z, item_surprisal,
+     item_surprisal_z, has_novel_item, combined_score, is_flagged)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (accession_number) DO UPDATE SET
+    cik               = excluded.cik,
+    interval_days     = excluded.interval_days,
+    cadence_z         = excluded.cadence_z,
+    item_surprisal    = excluded.item_surprisal,
+    item_surprisal_z  = excluded.item_surprisal_z,
+    has_novel_item    = excluded.has_novel_item,
+    combined_score    = excluded.combined_score,
+    is_flagged        = excluded.is_flagged,
+    computed_at       = now();
+"""
+
 
 class FilingDB:
     def __init__(self, path: Path = DATABASE_PATH):
@@ -149,6 +217,8 @@ class FilingDB:
         self._con.execute(_CREATE_COLLECTION_STATUS)
         self._con.execute(_CREATE_RUN_LOG_SEQ)
         self._con.execute(_CREATE_RUN_LOG)
+        self._con.execute(_CREATE_COMPANY_FEATURES)
+        self._con.execute(_CREATE_FILING_SCORES)
 
     # ── companies ─────────────────────────────────────────────────────────────
 
@@ -236,6 +306,72 @@ class FilingDB:
             [started_at, finished_at, companies_attempted,
              companies_succeeded, companies_failed, filings_collected, notes],
         )
+
+    # ── detection: company features (Checkpoint 3) ───────────────────────────
+
+    def upsert_company_features(self, rows: list[dict[str, Any]]) -> int:
+        """Insert or refresh per-company baseline features. Returns count upserted."""
+        if not rows:
+            return 0
+        params = [
+            (
+                r["cik"],
+                r["n_filings"],
+                r["median_interval_days"],
+                r["mad_interval_days"],
+                r["thin_baseline"],
+                r["item_distribution_json"],
+                r["drift_window_n"],
+                r["drift_chi2_stat"],
+                r["drift_p_value"],
+                r["is_drifting"],
+            )
+            for r in rows
+        ]
+        self._con.executemany(_UPSERT_COMPANY_FEATURES, params)
+        return len(params)
+
+    # ── detection: filing scores (Checkpoint 3) ──────────────────────────────
+
+    def upsert_filing_scores(self, rows: list[dict[str, Any]]) -> int:
+        """Insert or refresh per-filing anomaly scores. Returns count upserted."""
+        if not rows:
+            return 0
+        params = [
+            (
+                r["accession_number"],
+                r["cik"],
+                r["interval_days"],
+                r["cadence_z"],
+                r["item_surprisal"],
+                r["item_surprisal_z"],
+                r["has_novel_item"],
+                r["combined_score"],
+                r["is_flagged"],
+            )
+            for r in rows
+        ]
+        self._con.executemany(_UPSERT_FILING_SCORE, params)
+        return len(params)
+
+    def get_flagged_filings(self, limit: int = 50) -> list[tuple]:
+        """Top flagged filings, most anomalous first, joined with company/item info."""
+        return self._con.execute(
+            """
+            SELECT c.ticker, c.name, f.filing_date, f.accession_number, s.cik,
+                   s.interval_days, s.cadence_z, s.item_surprisal_z,
+                   s.has_novel_item, s.combined_score,
+                   (SELECT string_agg(item_code, ', ' ORDER BY item_code)
+                    FROM filing_items WHERE accession_number = f.accession_number) AS items
+            FROM filing_scores s
+            JOIN filings f USING (accession_number)
+            JOIN companies c ON c.cik = s.cik
+            WHERE s.is_flagged
+            ORDER BY s.combined_score DESC NULLS LAST
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
 
     # ── generic query helpers ─────────────────────────────────────────────────
 

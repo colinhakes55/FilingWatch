@@ -12,7 +12,8 @@
       "Bash(.venv/bin/python scripts/collect_sp500.py --limit 10)",
       "Bash(.venv/bin/python -)",
       "Bash(.venv/bin/python scripts/collect_sp500.py)",
-      "Bash(.venv/bin/python scripts/eda.py)"
+      "Bash(.venv/bin/python scripts/eda.py)",
+      "Bash(xargs -I{} echo {})"
     ]
   }
 }

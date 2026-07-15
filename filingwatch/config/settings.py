@@ -54,3 +54,22 @@ STUDY_WINDOW_END:   date = date.today()
 # ── Storage ───────────────────────────────────────────────────────────────────
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DATABASE_PATH = _REPO_ROOT / "data" / "filings.duckdb"
+
+# ── Anomaly detection (Checkpoint 3) ─────────────────────────────────────────
+# Companies with fewer filings than this don't get a baseline/score — the EDA
+# identified the same threshold as the point below which cadence/item-mix
+# statistics become unreliable.
+MIN_FILINGS_FOR_BASELINE: int = 20
+
+# A filing is flagged if its combined rank-based normal-score (see
+# filingwatch/detection/scoring.py) exceeds this. cadence_z and
+# item_surprisal_z are empirical rank transforms, not raw z-scores, so their
+# achievable magnitude is bounded by each company's own sample size — a
+# company needs at least ~80 filings before it can even reach 2.5 on either
+# axis. 2.5 (~top 0.6% two-tailed) was chosen empirically against the actual
+# dataset: it flags a meaningful set of filings via cadence/item-mix alone
+# (not just has_novel_item) without over-flagging routine variation.
+FLAG_THRESHOLD: float = 2.5
+
+# Significance level for the per-company drift chi-square test.
+DRIFT_ALPHA: float = 0.05
